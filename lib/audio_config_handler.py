@@ -24,6 +24,8 @@
 
 import os
 import copy
+import re
+import alsaaudio
 import logging
 import tornado.web
 from lib.zynthian_config_handler import ZynthianConfigHandler
@@ -290,6 +292,41 @@ class AudioConfigHandler(ZynthianConfigHandler):
 
         config = {}
 
+        jack_config = os.environ.get('JACKD_OPTIONS', "-P 70 -t 2000 -s -d alsa -d hw:0 -r 48000 -p 256 -n 2")
+        device = 'hw:0'
+        samplerate = 48000
+        num_frames = 1024
+        num_periods = 2
+        mode_soft = '0'
+        mode_16 = '0'
+        try:
+            alsa_config = re.split('-d\salsa', jack_config)[1]
+            alsa_config = f" {alsa_config.strip()} "
+            if ' -s ' in alsa_config:
+                mode_soft = '1'
+                alsa_config.replace(' -s ', ' ')
+            if ' -S ' in alsa_config:
+                mode_16 = '1'
+                alsa_config.replace(' -S ', ' ')
+            a_config = re.findall(r"-(\w)\s*([\w:]+)", alsa_config)
+            for c in a_config:
+                match c[0]:
+                    case 'd':
+                        device = c[1]
+                    case 'r':
+                        samplerate = c[1]
+                    case 'p':
+                        num_frames = c[1]
+                    case 'n':
+                        num_periods = c[1]
+        except Exception as e:
+            logging.error(f"Bad jack configuration {e}")
+        device = device[3:]
+        device_list = []
+        for pcm in alsaaudio.pcms():
+            if pcm.startswith("hw:CARD="):
+                device_list.append(pcm[8:].split(',')[0])
+
         if os.environ.get('ZYNTHIAN_KIT_VERSION') != 'Custom':
             custom_options_disabled = True
             config['ZYNTHIAN_MESSAGE'] = {
@@ -324,6 +361,46 @@ class AudioConfigHandler(ZynthianConfigHandler):
             'value': os.environ.get('SOUNDCARD_CONFIG'),
             'advanced': True,
             'disabled': custom_options_disabled
+        }
+        config['ALSA_DEVICE'] = {
+            'type': 'select',
+            'title': "Soundcard Device",
+            'value': device,
+            'options': device_list,
+            'refresh_on_change': True
+        }
+        config['ALSA_SAMPLERATE'] = {
+            'type': 'select',
+            'title': "Samplerate",
+            'value': str(samplerate),
+            'options': ['32000', '44100', '48000', '96000'],
+            'refresh_on_change': True
+        }
+        config['ALSA_NUM_FRAMES'] = {
+            'type': 'select',
+            'title': "Buffer Size",
+            'value': str(num_frames),
+            'options': ['64', '128', '256', '512', '1024', '2048'],
+            'refresh_on_change': True
+        }
+        config['ALSA_NUM_PERIODS'] = {
+            'type': 'select',
+            'title': "Number of Buffers",
+            'value': str(num_periods),
+            'options': ['2', '3'],
+            'refresh_on_change': True
+        }
+        config['ALSA_MODE_16'] = {
+            'type': 'boolean',
+            'title': '16-bit',
+            'value': mode_16,
+            'refresh_on_change': True
+        }
+        config['ALSA_MODE_SOFT'] = {
+            'type': 'boolean',
+            'title': 'Soft x-run mode',
+            'value': mode_soft,
+            'refresh_on_change': True
         }
         config['JACKD_OPTIONS'] = {
             'type': 'text',
@@ -376,6 +453,52 @@ class AudioConfigHandler(ZynthianConfigHandler):
             'ZYNTHIAN_DISABLE_RBPI_AUDIO', '0')
         self.request.arguments['ZYNTHIAN_RBPI_HEADPHONES'] = self.request.arguments.get(
             'ZYNTHIAN_RBPI_HEADPHONES', '0')
+
+        device = self.get_argument('ALSA_DEVICE')
+        samplerate = self.get_argument('ALSA_SAMPLERATE')
+        num_frames = self.get_argument('ALSA_NUM_FRAMES')
+        num_periods = self.get_argument('ALSA_NUM_PERIODS')
+        jackd_options = self.get_argument('JACKD_OPTIONS', os.environ.get('JACKD_OPTIONS'))
+
+        try:
+            jackd_config, alsa_config = re.split('-d\salsa', jackd_options)
+            alsa_config = f" {alsa_config.strip()} "
+            alsa_config.replace(' -S ', ' ')
+            alsa_config.replace(' -s ', ' ')
+            a_config = re.findall(r"-(\w)\s*([\w:]+)", alsa_config)
+            jackd_options = f"{jackd_config.strip()} -d alsa"
+            for c in a_config:
+                match c[0]:
+                    case 'd':
+                        jackd_options += f" -{c[0]} hw:{device}"
+                        device = None
+                    case 'r':
+                        jackd_options += f" -{c[0]} {samplerate}"
+                        samplerate = None
+                    case 'p':
+                        jackd_options += f" -{c[0]} {num_frames}"
+                        num_frames = None
+                    case 'n':
+                        jackd_options += f" -{c[0]} {num_periods}"
+                        num_periods = None
+                    case _:
+                        jackd_options += f" -{c[0]} {c[1]}"
+            if device is not None:
+                jackd_options += f" -d hw:{device}"
+            if samplerate is not None:
+                jackd_options += f" -r {samplerate}"
+            if num_frames is not None:
+                jackd_options += f" -p {num_frames}"
+            if num_periods is not None:
+                jackd_options += f" -n {num_periods}"
+        except Exception as e:
+            logging.error(e)
+        if self.get_argument('ALSA_MODE_SOFT', '0') == '1':
+                jackd_options += " -s"
+        if self.get_argument('ALSA_MODE_16', '0') == '1':
+            jackd_options += " -S"
+        self.request.arguments["JACKD_OPTIONS"] = [jackd_options.encode('utf-8')]
+
         try:
             previous_soundcard = os.environ.get('SOUNDCARD_NAME')
             current_soundcard = self.get_argument('SOUNDCARD_NAME')
@@ -397,7 +520,7 @@ class AudioConfigHandler(ZynthianConfigHandler):
             self.config_env(posted_config)
         else:
             for k in list(posted_config):
-                if k.startswith('ZYNTHIAN_CONTROLLER'):
+                if k.startswith('ZYNTHIAN_CONTROLLER') or k.startswith('ALSA_'):
                     del posted_config[k]
             errors = self.update_config(posted_config)
             self.reboot_flag = True
