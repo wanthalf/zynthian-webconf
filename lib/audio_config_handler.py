@@ -4,7 +4,7 @@
 #
 # Audio Configuration Handler
 #
-# Copyright (C) 2017 Fernando Moyano <jofemodo@zynthian.org>
+# Copyright (C) 2017-2024 Fernando Moyano <jofemodo@zynthian.org>
 #
 # ********************************************************************
 #
@@ -359,7 +359,7 @@ class AudioConfigHandler(ZynthianConfigHandler):
         }
         config['_PARAM_WARNING_'] = {
             'type': 'html',
-            'content': f"<br><div class='alert alert-warning'>Software latency: {latency:0.1f}ms. (Actual latency may be higher due to soundcard hardware.)<br>Note: Some parameter values do not work on some soundcards</div>"
+            'content': f"<br><div class='alert alert-warning'>Software latency: {latency:0.1f}ms. (Actual latency may be higher due to soundcard hardware.)<br>Note: Some parameter values do not work on some soundcards.</div>"
         }
         config['ALSA_SAMPLERATE'] = {
             'type': 'select',
