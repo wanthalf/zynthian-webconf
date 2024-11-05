@@ -305,6 +305,7 @@ class AudioConfigHandler(ZynthianConfigHandler):
             num_periods = "2" if val is None else val.group(1)
             mode_soft = "1" if " -s" in alsa_config else "0"
             mode_16 = "1" if " -S" in alsa_config else "0"
+            latency = 1000 * int(num_periods) * int(num_frames) / int(samplerate)
         except Exception as e:
             logging.error(f"Bad jack configuration {e}")
         device_list = []
@@ -358,7 +359,7 @@ class AudioConfigHandler(ZynthianConfigHandler):
         }
         config['_PARAM_WARNING_'] = {
             'type': 'html',
-            'content': "<br><div class='alert alert-warning'>Caution: Some parameter values do not work on some soundcards</div>"
+            'content': f"<br><div class='alert alert-warning'>Software latency: {latency:0.1f}ms. (Actual latency may be higher due to soundcard hardware.)<br>Caution: Some parameter values do not work on some soundcards</div>"
         }
         config['ALSA_SAMPLERATE'] = {
             'type': 'select',
@@ -383,7 +384,7 @@ class AudioConfigHandler(ZynthianConfigHandler):
         }
         config['ALSA_MODE_16'] = {
             'type': 'boolean',
-            'title': '16-bit',
+            'title': '16-bit mode',
             'value': mode_16,
             'refresh_on_change': True
         }
