@@ -359,7 +359,7 @@ class AudioConfigHandler(ZynthianConfigHandler):
         }
         config['_PARAM_WARNING_'] = {
             'type': 'html',
-            'content': f"<br><div class='alert alert-warning'>Software latency: {latency:0.1f}ms. (Actual latency may be higher due to soundcard hardware.)<br>Caution: Some parameter values do not work on some soundcards</div>"
+            'content': f"<br><div class='alert alert-warning'>Software latency: {latency:0.1f}ms. (Actual latency may be higher due to soundcard hardware.)<br>Note: Some parameter values do not work on some soundcards</div>"
         }
         config['ALSA_SAMPLERATE'] = {
             'type': 'select',
@@ -441,6 +441,9 @@ class AudioConfigHandler(ZynthianConfigHandler):
 
     @tornado.web.authenticated
     def post(self):
+        command = self.get_argument('_command', '')
+        logging.info("COMMAND = {}".format(command))
+
         self.request.arguments['ZYNTHIAN_DISABLE_RBPI_AUDIO'] = self.request.arguments.get(
             'ZYNTHIAN_DISABLE_RBPI_AUDIO', '0')
         self.request.arguments['ZYNTHIAN_RBPI_HEADPHONES'] = self.request.arguments.get(
@@ -448,7 +451,7 @@ class AudioConfigHandler(ZynthianConfigHandler):
 
         try:
             changed = self.request.arguments['_changed'][0].decode()
-            if changed.startswith("ALSA"):
+            if changed.startswith("ALSA") or command == "SAVE":
                 jackd_options = self.get_argument('JACKD_OPTIONS', os.environ.get('JACKD_OPTIONS', "-P 70 -t 2000 -s -d alsa -d hw:0 -r 48000 -p 256 -n 2"))
                 jack_config, alsa_config = re.split('-d\salsa', jackd_options)
                 val =  self.get_argument('ALSA_DEVICE')
@@ -503,9 +506,6 @@ class AudioConfigHandler(ZynthianConfigHandler):
 
         posted_config = tornado.escape.recursive_unicode(
             self.request.arguments)
-
-        command = self.get_argument('_command', '')
-        logging.info("COMMAND = {}".format(command))
 
         if command == 'REFRESH':
             errors = None
