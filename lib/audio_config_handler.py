@@ -292,40 +292,27 @@ class AudioConfigHandler(ZynthianConfigHandler):
 
         config = {}
 
-        jack_config = os.environ.get('JACKD_OPTIONS', "-P 70 -t 2000 -s -d alsa -d hw:0 -r 48000 -p 256 -n 2")
-        device = 'hw:0'
-        samplerate = 48000
-        num_frames = 1024
-        num_periods = 2
-        mode_soft = '0'
-        mode_16 = '0'
         try:
-            alsa_config = re.split('-d\salsa', jack_config)[1]
-            alsa_config = f" {alsa_config.strip()} "
-            if ' -s ' in alsa_config:
-                mode_soft = '1'
-                alsa_config.replace(' -s ', ' ')
-            if ' -S ' in alsa_config:
-                mode_16 = '1'
-                alsa_config.replace(' -S ', ' ')
-            a_config = re.findall(r"-(\w)\s*([\w:]+)", alsa_config)
-            for c in a_config:
-                match c[0]:
-                    case 'd':
-                        device = c[1]
-                    case 'r':
-                        samplerate = c[1]
-                    case 'p':
-                        num_frames = c[1]
-                    case 'n':
-                        num_periods = c[1]
+            jackd_options = os.environ.get('JACKD_OPTIONS', "-P 70 -t 2000 -s -d alsa -d hw:0 -r 48000 -p 256 -n 2")
+            alsa_config = re.split('-d\salsa', jackd_options)[1] + " "
+            val = re.search(r"-d\s*(\S*)", alsa_config)
+            device = "hw:0" if val is None else val.group(1)[3:]
+            val = re.search(r"-r\s*(\S*)", alsa_config)
+            samplerate = "48000" if val is None else val.group(1)
+            val = re.search(r"-p\s*(\S*)", alsa_config)
+            num_frames = "1024" if val is None else val.group(1)
+            val = re.search(r"-n\s*(\S*)", alsa_config)
+            num_periods = "2" if val is None else val.group(1)
+            mode_soft = "1" if " -s" in alsa_config else "0"
+            mode_16 = "1" if " -S" in alsa_config else "0"
         except Exception as e:
             logging.error(f"Bad jack configuration {e}")
-        device = device[3:]
         device_list = []
         for pcm in alsaaudio.pcms():
-            if pcm.startswith("hw:CARD="):
+            if pcm.startswith("hw:CARD=") and not pcm.startswith("hw:CARD=b1"):
                 device_list.append(pcm[8:].split(',')[0])
+        if device not in device_list:
+            device_list.insert(0, f"{device} (Not detected)")
 
         if os.environ.get('ZYNTHIAN_KIT_VERSION') != 'Custom':
             custom_options_disabled = True
@@ -369,6 +356,10 @@ class AudioConfigHandler(ZynthianConfigHandler):
             'options': device_list,
             'refresh_on_change': True
         }
+        config['_PARAM_WARNING_'] = {
+            'type': 'html',
+            'content': "<br><div class='alert alert-warning'>Caution: Some parameter values do not work on some soundcards</div>"
+        }
         config['ALSA_SAMPLERATE'] = {
             'type': 'select',
             'title': "Samplerate",
@@ -405,7 +396,7 @@ class AudioConfigHandler(ZynthianConfigHandler):
         config['JACKD_OPTIONS'] = {
             'type': 'text',
             'title': "Jackd Options",
-            'value': os.environ.get('JACKD_OPTIONS', "-P 70 -t 2000 -s -d alsa -d hw:0 -r 48000 -p 256 -n 2"),
+            'value': jackd_options,
             'advanced': True,
             'disabled': custom_options_disabled
         }
@@ -454,50 +445,50 @@ class AudioConfigHandler(ZynthianConfigHandler):
         self.request.arguments['ZYNTHIAN_RBPI_HEADPHONES'] = self.request.arguments.get(
             'ZYNTHIAN_RBPI_HEADPHONES', '0')
 
-        device = self.get_argument('ALSA_DEVICE')
-        samplerate = self.get_argument('ALSA_SAMPLERATE')
-        num_frames = self.get_argument('ALSA_NUM_FRAMES')
-        num_periods = self.get_argument('ALSA_NUM_PERIODS')
-        jackd_options = self.get_argument('JACKD_OPTIONS', os.environ.get('JACKD_OPTIONS'))
-
         try:
-            jackd_config, alsa_config = re.split('-d\salsa', jackd_options)
-            alsa_config = f" {alsa_config.strip()} "
-            alsa_config.replace(' -S ', ' ')
-            alsa_config.replace(' -s ', ' ')
-            a_config = re.findall(r"-(\w)\s*([\w:]+)", alsa_config)
-            jackd_options = f"{jackd_config.strip()} -d alsa"
-            for c in a_config:
-                match c[0]:
-                    case 'd':
-                        jackd_options += f" -{c[0]} hw:{device}"
-                        device = None
-                    case 'r':
-                        jackd_options += f" -{c[0]} {samplerate}"
-                        samplerate = None
-                    case 'p':
-                        jackd_options += f" -{c[0]} {num_frames}"
-                        num_frames = None
-                    case 'n':
-                        jackd_options += f" -{c[0]} {num_periods}"
-                        num_periods = None
-                    case _:
-                        jackd_options += f" -{c[0]} {c[1]}"
-            if device is not None:
-                jackd_options += f" -d hw:{device}"
-            if samplerate is not None:
-                jackd_options += f" -r {samplerate}"
-            if num_frames is not None:
-                jackd_options += f" -p {num_frames}"
-            if num_periods is not None:
-                jackd_options += f" -n {num_periods}"
+            changed = self.request.arguments['_changed'][0].decode()
+            if changed.startswith("ALSA"):
+                jackd_options = self.get_argument('JACKD_OPTIONS', os.environ.get('JACKD_OPTIONS', "-P 70 -t 2000 -s -d alsa -d hw:0 -r 48000 -p 256 -n 2"))
+                jack_config, alsa_config = re.split('-d\salsa', jackd_options)
+                val =  self.get_argument('ALSA_DEVICE')
+                if val.endswith(" (Not detected)"):
+                    val = val[:-15]
+                match = re.search(r"-d\s*(\S*)", alsa_config)
+                if match is None:
+                    alsa_config += f" -d hw{val}"
+                else:
+                    alsa_config = alsa_config.replace(match.group(0), f"-d hw:{val}")
+                val = self.get_argument('ALSA_SAMPLERATE')
+                match = re.search(r"-r\s*(\S*)", alsa_config)
+                if match is None:
+                    alsa_config += f" -r {val}"
+                else:
+                    alsa_config = alsa_config.replace(match.group(0), f"-r {val}")
+                val = self.get_argument('ALSA_NUM_FRAMES')
+                match = re.search(r"-p\s*(\S*)", alsa_config)
+                if match is None:
+                    alsa_config += f" -p {val}"
+                else:
+                    alsa_config = alsa_config.replace(match.group(0), f"-p {val}")
+                val = self.get_argument('ALSA_NUM_PERIODS')
+                match = re.search(r"-n\s*(\S*)", alsa_config)
+                if match is None:
+                    alsa_config += f" -n {val}"
+                else:
+                    alsa_config = alsa_config.replace(match.group(0), f"-n {val}")
+                if self.get_argument("ALSA_MODE_16", "0") == "0":
+                    alsa_config = alsa_config.replace(" -S", " ")
+                elif " -S" not in alsa_config:
+                    alsa_config += " -S"
+                if self.get_argument("ALSA_MODE_SOFT", "0") == "0":
+                    alsa_config = alsa_config.replace(" -s", " ")
+                elif " -s" not in alsa_config:
+                    alsa_config += " -s"
+
+                jackd_options = f"{jack_config}-d alsa{alsa_config}"
+                self.request.arguments["JACKD_OPTIONS"] = [jackd_options.encode('utf-8')]
         except Exception as e:
             logging.error(e)
-        if self.get_argument('ALSA_MODE_SOFT', '0') == '1':
-                jackd_options += " -s"
-        if self.get_argument('ALSA_MODE_16', '0') == '1':
-            jackd_options += " -S"
-        self.request.arguments["JACKD_OPTIONS"] = [jackd_options.encode('utf-8')]
 
         try:
             previous_soundcard = os.environ.get('SOUNDCARD_NAME')
